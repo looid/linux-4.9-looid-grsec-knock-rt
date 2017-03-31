@@ -1,0 +1,133 @@
+--- kernel/time/hrtimer.c
++++ kernel/time/hrtimer.c
+@@ -870,7 +867,7 @@ void hrtimer_wait_for_timer(const struct
+ {
+ 	struct hrtimer_clock_base *base = timer->base;
+ 
+-	if (base && base->cpu_base && !hrtimer_hres_active())
++	if (base && base->cpu_base && !timer->irqsafe)
+ 		wait_event(base->cpu_base->wait,
+ 				!(hrtimer_callback_running(timer)));
+ }
+@@ -1305,12 +1309,112 @@ static void __run_hrtimer(struct hrtimer
+ 	cpu_base->running = NULL;
+ }
+ 
++#ifdef CONFIG_PREEMPT_RT_BASE
++static void hrtimer_rt_reprogram(int restart, struct hrtimer *timer,
++				 struct hrtimer_clock_base *base)
++{
++	int leftmost;
++
++	if (restart != HRTIMER_NORESTART &&
++	    !(timer->state & HRTIMER_STATE_ENQUEUED)) {
++
++		leftmost = enqueue_hrtimer(timer, base);
++		if (!leftmost)
++			return;
++#ifdef CONFIG_HIGH_RES_TIMERS
++		if (!hrtimer_is_hres_active(timer)) {
++			/*
++			 * Kick to reschedule the next tick to handle the new timer
++			 * on dynticks target.
++			 */
++			if (base->cpu_base->nohz_active)
++				wake_up_nohz_cpu(base->cpu_base->cpu);
++		} else {
++
++			hrtimer_reprogram(timer, base);
++		}
++#endif
++	}
++}
++
++/*
++ * The changes in mainline which removed the callback modes from
++ * hrtimer are not yet working with -rt. The non wakeup_process()
++ * based callbacks which involve sleeping locks need to be treated
++ * seperately.
++ */
++static void hrtimer_rt_run_pending(void)
++{
++	enum hrtimer_restart (*fn)(struct hrtimer *);
++	struct hrtimer_cpu_base *cpu_base;
++	struct hrtimer_clock_base *base;
++	struct hrtimer *timer;
++	int index, restart;
++
++	local_irq_disable();
++	cpu_base = &per_cpu(hrtimer_bases, smp_processor_id());
++
++	raw_spin_lock(&cpu_base->lock);
++
++	for (index = 0; index < HRTIMER_MAX_CLOCK_BASES; index++) {
++		base = &cpu_base->clock_base[index];
++
++		while (!list_empty(&base->expired)) {
++			timer = list_first_entry(&base->expired,
++						 struct hrtimer, cb_entry);
++
++			/*
++			 * Same as the above __run_hrtimer function
++			 * just we run with interrupts enabled.
++			 */
++			debug_deactivate(timer);
++			cpu_base->running_soft = timer;
++			raw_write_seqcount_barrier(&cpu_base->seq);
++
++			__remove_hrtimer(timer, base, HRTIMER_STATE_INACTIVE, 0);
++			timer_stats_account_hrtimer(timer);
++			fn = timer->function;
++
++			raw_spin_unlock_irq(&cpu_base->lock);
++			restart = fn(timer);
++			raw_spin_lock_irq(&cpu_base->lock);
++
++			hrtimer_rt_reprogram(restart, timer, base);
++			raw_write_seqcount_barrier(&cpu_base->seq);
++
++			WARN_ON_ONCE(cpu_base->running_soft != timer);
++			cpu_base->running_soft = NULL;
++		}
++	}
++
++	raw_spin_unlock_irq(&cpu_base->lock);
++
++	wake_up_timer_waiters(cpu_base);
++}
++
++static int hrtimer_rt_defer(struct hrtimer *timer)
++{
++	if (timer->irqsafe)
++		return 0;
++
++	__remove_hrtimer(timer, timer->base, timer->state, 0);
++	list_add_tail(&timer->cb_entry, &timer->base->expired);
++	return 1;
++}
++
++#else
++
++static inline int hrtimer_rt_defer(struct hrtimer *timer) { return 0; }
++
++#endif
++
+ static enum hrtimer_restart hrtimer_wakeup(struct hrtimer *timer);
+ 
+ static void __hrtimer_run_queues(struct hrtimer_cpu_base *cpu_base, ktime_t now)
+ {
+ 	struct hrtimer_clock_base *base = cpu_base->clock_base;
+ 	unsigned int active = cpu_base->active_bases;
++	int raise = 0;
+ 
+ 	for (; active; base++, active >>= 1) {
+ 		struct timerqueue_node *node;
+@@ -1499,8 +1608,6 @@ void hrtimer_run_queues(void)
+ 	now = hrtimer_update_base(cpu_base);
+ 	__hrtimer_run_queues(cpu_base, now);
+ 	raw_spin_unlock(&cpu_base->lock);
+-
+-	wake_up_timer_waiters(cpu_base);
+ }
+ 
+ /*

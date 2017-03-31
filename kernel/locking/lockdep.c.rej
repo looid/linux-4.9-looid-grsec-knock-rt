@@ -1,0 +1,25 @@
+--- kernel/locking/lockdep.c
++++ kernel/locking/lockdep.c
+@@ -738,19 +752,18 @@ register_lock_class(struct lockdep_map *
+ 	DEBUG_LOCKS_WARN_ON(!irqs_disabled());
+ 
+ 	class = look_up_lock_class(lock, subclass);
+-	if (likely(class))
++	if (likely(!IS_ERR_OR_NULL(class)))
+ 		goto out_set_class_cache;
+ 
+ 	/*
+ 	 * Debug-check: all keys must be persistent!
+- 	 */
+-	if (!static_obj(lock->key)) {
++	 */
++	if (IS_ERR(class)) {
+ 		debug_locks_off();
+ 		printk("INFO: trying to register non-static key.\n");
+ 		printk("the code is fine but needs lockdep annotation.\n");
+ 		printk("turning off the locking correctness validator.\n");
+ 		dump_stack();
+-
+ 		return NULL;
+ 	}
+ 

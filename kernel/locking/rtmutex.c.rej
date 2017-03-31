@@ -1,0 +1,11 @@
+--- kernel/locking/rtmutex.c
++++ kernel/locking/rtmutex.c
+@@ -2106,7 +2242,7 @@ int __sched rt_mutex_lock_killable(struc
+ {
+ 	might_sleep();
+ 
+-	return rt_mutex_fastlock(lock, TASK_KILLABLE, rt_mutex_slowlock);
++	return rt_mutex_fastlock(lock, TASK_KILLABLE, NULL, rt_mutex_slowlock);
+ }
+ EXPORT_SYMBOL_GPL(rt_mutex_lock_killable);
+ 

@@ -1,0 +1,10 @@
+--- lib/radix-tree.c
++++ lib/radix-tree.c
+@@ -68,6 +68,7 @@ struct radix_tree_preload {
+ 	struct radix_tree_node *nodes;
+ };
+ static DEFINE_PER_CPU(struct radix_tree_preload, radix_tree_preloads) = { 0, };
++static DEFINE_LOCAL_IRQ_LOCK(radix_tree_preloads_lock);
+ 
+ static inline void *node_to_entry(void *ptr)
+ {

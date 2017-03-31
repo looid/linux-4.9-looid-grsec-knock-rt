@@ -1,0 +1,29 @@
+--- kernel/rcu/tree_plugin.h
++++ kernel/rcu/tree_plugin.h
+@@ -1083,26 +991,12 @@ static void rcu_boost_kthread_setaffinit
+ 	free_cpumask_var(cm);
+ }
+ 
+-static struct smp_hotplug_thread rcu_cpu_thread_spec = {
+-	.store			= &rcu_cpu_kthread_task,
+-	.thread_should_run	= rcu_cpu_kthread_should_run,
+-	.thread_fn		= rcu_cpu_kthread,
+-	.thread_comm		= "rcuc/%u",
+-	.setup			= rcu_cpu_kthread_setup,
+-	.park			= rcu_cpu_kthread_park,
+-};
+-
+ /*
+  * Spawn boost kthreads -- called as soon as the scheduler is running.
+  */
+ static void __init rcu_spawn_boost_kthreads(void)
+ {
+ 	struct rcu_node *rnp;
+-	int cpu;
+-
+-	for_each_possible_cpu(cpu)
+-		per_cpu(rcu_cpu_has_work, cpu) = 0;
+-	BUG_ON(smpboot_register_percpu_thread(&rcu_cpu_thread_spec));
+ 	rcu_for_each_leaf_node(rcu_state_p, rnp)
+ 		(void)rcu_spawn_one_boost_kthread(rcu_state_p, rnp);
+ }

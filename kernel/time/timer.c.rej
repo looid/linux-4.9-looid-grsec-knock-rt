@@ -1,0 +1,35 @@
+--- kernel/time/timer.c
++++ kernel/time/timer.c
+@@ -1704,22 +1751,11 @@ void update_process_times(int user_tick)
+  */
+ static inline void __run_timers(struct timer_base *base)
+ {
+-	struct hlist_head heads[LVL_DEPTH];
+-	int levels;
+-
+-	if (!time_after_eq(jiffies, base->clk))
+-		return;
+-
+ 	raw_spin_lock_irq(&base->lock);
+ 
+-	while (time_after_eq(jiffies, base->clk)) {
+-
+-		levels = collect_expired_timers(base, heads);
+-		base->clk++;
++	while (find_expired_timers(base))
++		expire_timers(base);
+ 
+-		while (levels--)
+-			expire_timers(base, heads + levels);
+-	}
+ 	raw_spin_unlock_irq(&base->lock);
+ 	wakeup_timer_waiters(base);
+ }
+@@ -1947,6 +1984,7 @@ static void __init init_timer_cpu(int cp
+ #ifdef CONFIG_PREEMPT_RT_FULL
+ 		init_swait_queue_head(&base->wait_for_running_timer);
+ #endif
++		base->expired_count = 0;
+ 	}
+ }
+ 
